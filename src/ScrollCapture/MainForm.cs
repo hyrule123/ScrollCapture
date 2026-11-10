@@ -1,0 +1,201 @@
+using System;
+using System.Drawing;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace ScrollCapture
+{
+    internal sealed class MainForm : Form
+    {
+        private readonly Button _startButton;
+        private readonly RadioButton _autoMode;
+        private readonly RadioButton _manualMode;
+        private readonly NumericUpDown _notches;
+        private readonly NumericUpDown _delay;
+        private readonly NumericUpDown _maxHeight;
+        private readonly Label _delayLabel;
+        private readonly Label _notchLabel;
+        private bool _busy;
+
+        public MainForm()
+        {
+            Text = "ScrollCapture";
+            Font = new Font("Segoe UI", 9f);
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            MaximizeBox = false;
+            StartPosition = FormStartPosition.CenterScreen;
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            KeyPreview = true;
+            if (Program.AppIcon != null) Icon = Program.AppIcon;
+
+            var table = new TableLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 2,
+                Padding = new Padding(12),
+                Dock = DockStyle.Fill,
+            };
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            _startButton = new Button
+            {
+                Text = "스크롤 캡처 시작 (Ctrl+N)",
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Fill,
+                Padding = new Padding(10, 8, 10, 8),
+                Margin = new Padding(3, 3, 3, 10),
+                Font = new Font("Segoe UI", 10.5f, FontStyle.Bold),
+            };
+            _startButton.Click += async (s, e) => await StartCaptureAsync();
+            table.Controls.Add(_startButton, 0, 0);
+            table.SetColumnSpan(_startButton, 2);
+
+            _autoMode = new RadioButton { Text = "자동 스크롤", Checked = true, AutoSize = true };
+            _manualMode = new RadioButton { Text = "직접 스크롤", AutoSize = true };
+            _autoMode.CheckedChanged += (s, e) => UpdateModeUi();
+            var modePanel = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false,
+                Margin = new Padding(0),
+            };
+            modePanel.Controls.Add(_autoMode);
+            modePanel.Controls.Add(_manualMode);
+            AddRow(table, 1, MakeLabel("모드"), modePanel);
+
+            _notchLabel = MakeLabel("스크롤 양 (휠 칸)");
+            _notches = MakeNumber(1, 30, 3, 1);
+            AddRow(table, 2, _notchLabel, _notches);
+
+            _delayLabel = MakeLabel("대기 시간 (ms)");
+            _delay = MakeNumber(30, 5000, 300, 50);
+            AddRow(table, 3, _delayLabel, _delay);
+
+            _maxHeight = MakeNumber(500, 200000, 30000, 1000);
+            _maxHeight.ThousandsSeparator = true;
+            AddRow(table, 4, MakeLabel("최대 높이 (px)"), _maxHeight);
+
+            var hint = new Label
+            {
+                AutoSize = true,
+                ForeColor = SystemColors.GrayText,
+                Margin = new Padding(3, 10, 3, 0),
+                MaximumSize = new Size(340, 0),
+                Text = "영역 선택: 드래그로 사각형 선택, 클릭하면 마우스 아래 창/컨트롤 선택.\n" +
+                       "캡처 중: Esc 또는 [완료] 버튼으로 종료합니다.\n" +
+                       "고정 헤더/푸터는 자동으로 한 번만 포함됩니다.",
+            };
+            table.Controls.Add(hint, 0, 5);
+            table.SetColumnSpan(hint, 2);
+
+            Controls.Add(table);
+            UpdateModeUi();
+        }
+
+        private static Label MakeLabel(string text)
+        {
+            return new Label
+            {
+                Text = text,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(3, 6, 12, 6),
+            };
+        }
+
+        private static NumericUpDown MakeNumber(int min, int max, int value, int step)
+        {
+            return new NumericUpDown
+            {
+                Minimum = min,
+                Maximum = max,
+                Value = value,
+                Increment = step,
+                Width = 110,
+                TextAlign = HorizontalAlignment.Right,
+                Anchor = AnchorStyles.Left | AnchorStyles.Right,
+            };
+        }
+
+        private static void AddRow(TableLayoutPanel table, int row, Control label, Control field)
+        {
+            table.Controls.Add(label, 0, row);
+            table.Controls.Add(field, 1, row);
+        }
+
+        private void UpdateModeUi()
+        {
+            bool manual = _manualMode.Checked;
+            _notches.Enabled = !manual;
+            _notchLabel.Enabled = !manual;
+            _delayLabel.Text = manual ? "캡처 간격 (ms)" : "대기 시간 (ms)";
+            if (manual && _delay.Value > 200) _delay.Value = 100;
+            else if (!manual && _delay.Value < 150) _delay.Value = 300;
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+            if (e.Control && e.KeyCode == Keys.N)
+            {
+                e.Handled = true;
+                var _ = StartCaptureAsync();
+            }
+        }
+
+        private async Task StartCaptureAsync()
+        {
+            if (_busy) return;
+            _busy = true;
+
+            var options = new CaptureOptions
+            {
+                ManualScroll = _manualMode.Checked,
+                WheelNotches = (int)_notches.Value,
+                DelayMs = (int)_delay.Value,
+                MaxHeight = (int)_maxHeight.Value,
+            };
+
+            try
+            {
+                Hide();
+                await Task.Delay(200); // 메인 창이 화면에서 사라질 때까지 대기
+
+                Rectangle region;
+                var virtualBounds = SystemInformation.VirtualScreen;
+                using (var shot = ScreenCapture.Capture(virtualBounds))
+                using (var selector = new RegionSelectForm(shot, virtualBounds))
+                {
+                    if (selector.ShowDialog() != DialogResult.OK) return;
+                    region = selector.SelectedRegion;
+                }
+
+                await Task.Delay(150); // 선택 오버레이가 사라질 때까지 대기
+
+                var session = new CaptureSession(region, options);
+                var result = await session.RunAsync();
+
+                Show();
+                var resultForm = new ResultForm(result);
+                resultForm.FormClosed += (s, e) => resultForm.Dispose();
+                resultForm.Show();
+                resultForm.Activate();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("캡처 중 오류가 발생했습니다.\n" + ex.Message, "ScrollCapture",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                Show();
+                _busy = false;
+            }
+        }
+    }
+}
