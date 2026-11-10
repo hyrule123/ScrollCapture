@@ -16,6 +16,7 @@ namespace ScrollCapture
         private readonly Label _delayLabel;
         private readonly Label _notchLabel;
         private bool _busy;
+        private ResultForm _resultForm; // 결과 창은 하나만 유지
 
         public MainForm()
         {
@@ -161,10 +162,17 @@ namespace ScrollCapture
                 MaxHeight = (int)_maxHeight.Value,
             };
 
+            bool hidResult = false;
             try
             {
                 Hide();
-                await Task.Delay(200); // 메인 창이 화면에서 사라질 때까지 대기
+                // 기존 결과 창이 캡처/선택 화면에 찍히지 않도록 잠시 숨김
+                if (_resultForm != null && _resultForm.Visible)
+                {
+                    _resultForm.Hide();
+                    hidResult = true;
+                }
+                await Task.Delay(200); // 창이 화면에서 사라질 때까지 대기
 
                 Rectangle region;
                 var virtualBounds = SystemInformation.VirtualScreen;
@@ -180,11 +188,12 @@ namespace ScrollCapture
                 var session = new CaptureSession(region, options);
                 var result = await session.RunAsync();
 
+                // 새 결과로 교체: 이전 결과 창은 닫음
+                CloseResultForm();
+                hidResult = false;
+
                 Show();
-                var resultForm = new ResultForm(result);
-                resultForm.FormClosed += (s, e) => resultForm.Dispose();
-                resultForm.Show();
-                resultForm.Activate();
+                ShowResult(result);
             }
             catch (Exception ex)
             {
@@ -195,7 +204,45 @@ namespace ScrollCapture
             {
                 Show();
                 _busy = false;
+
+                // 캡처를 취소했으면 숨겨 두었던 이전 결과 창을 되돌림
+                if (hidResult && _resultForm != null && !_resultForm.IsDisposed)
+                {
+                    _resultForm.Show();
+                    _resultForm.Activate();
+                }
             }
+        }
+
+        private void ShowResult(CaptureResult result)
+        {
+            var form = new ResultForm(result);
+            form.FormClosed += (s, e) =>
+            {
+                bool wasCurrent = ReferenceEquals(_resultForm, form);
+                if (wasCurrent) _resultForm = null;
+                form.Dispose();
+                // 사용자가 결과 창을 닫으면 메인 창으로 포커스를 돌려줌
+                if (wasCurrent) FocusMainWindow();
+            };
+            _resultForm = form;
+            form.Show();
+            form.Activate();
+        }
+
+        private void CloseResultForm()
+        {
+            var old = _resultForm;
+            _resultForm = null; // 교체로 닫는 경우에는 메인 창 포커스 이동 안 함
+            if (old != null && !old.IsDisposed) old.Close();
+        }
+
+        private void FocusMainWindow()
+        {
+            if (_busy || IsDisposed) return;
+            if (!Visible) Show();
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
         }
     }
 }
