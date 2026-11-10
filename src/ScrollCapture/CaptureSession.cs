@@ -36,7 +36,7 @@ namespace ScrollCapture
         public async Task<CaptureResult> RunAsync()
         {
             var stitcher = new Stitcher(_region.Width, _region.Height);
-            var borders = BorderPieceForm.CreateAround(_region, 3, Color.FromArgb(255, 255, 60, 40));
+            var border = new RegionBorderForm(_region, 3, Color.FromArgb(255, 0, 0));
             var status = new CaptureStatusForm(_options.ManualScroll);
             status.StopRequested += (s, e) => _stopRequested = true;
 
@@ -48,7 +48,7 @@ namespace ScrollCapture
 
             try
             {
-                foreach (var b in borders) b.Show();
+                border.Show();
                 status.PlaceOutside(_region);
                 status.Show();
                 status.SetStatus(_options.ManualScroll ? "스크롤하면 자동으로 이어 붙입니다" : "캡처 시작...");
@@ -110,11 +110,8 @@ namespace ScrollCapture
             {
                 status.Close();
                 status.Dispose();
-                foreach (var b in borders)
-                {
-                    b.Close();
-                    b.Dispose();
-                }
+                border.Close();
+                border.Dispose();
                 if (cursorSaved && !_options.ManualScroll)
                     NativeMethods.SetCursorPos(savedCursor.X, savedCursor.Y);
             }

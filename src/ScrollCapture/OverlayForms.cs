@@ -1,22 +1,44 @@
 using System;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.Windows.Forms;
 
 namespace ScrollCapture
 {
-    /// <summary>캡처 영역 바깥쪽에 표시되는 얇은 테두리 조각. 클릭이 통과하고 포커스를 가져가지 않습니다.</summary>
-    internal sealed class BorderPieceForm : Form
+    /// <summary>
+    /// 캡처 영역 바깥쪽을 감싸는 테두리.
+    /// 영역보다 테두리 두께만큼 큰 창 하나를 만들고, UpdateLayeredWindow 로 테두리 픽셀만 불투명하게,
+    /// 안쪽은 완전히 투명하게 그립니다. 클릭은 통과하고 포커스를 가져가지 않으며 캡처에서도 제외됩니다.
+    /// (테두리는 캡처 영역 바깥에만 있으므로 캡처 이미지에는 포함되지 않습니다.)
+    /// </summary>
+    internal sealed class RegionBorderForm : Form
     {
-        public BorderPieceForm(Rectangle bounds, Color color)
+        private readonly Rectangle _region;
+        private readonly int _thickness;
+        private readonly Color _color;
+
+        public RegionBorderForm(Rectangle region, int thickness, Color color)
         {
+            _region = region;
+            _thickness = thickness;
+            _color = Color.FromArgb(255, color);
+
             AutoScaleMode = AutoScaleMode.None;
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
             ShowInTaskbar = false;
             TopMost = true;
-            BackColor = color;
-            Bounds = bounds;
-            Opacity = 0.85;
+            Bounds = OuterBounds;
+        }
+
+        private Rectangle OuterBounds
+        {
+            get
+            {
+                var r = _region;
+                r.Inflate(_thickness, _thickness);
+                return r;
+            }
         }
 
         protected override bool ShowWithoutActivation { get { return true; } }
@@ -37,18 +59,38 @@ namespace ScrollCapture
         {
             base.OnHandleCreated(e);
             NativeMethods.TryExcludeFromCapture(Handle);
+            UpdateLayer();
         }
 
-        /// <summary>영역 바깥을 감싸는 테두리 4조각을 만듭니다.</summary>
-        public static BorderPieceForm[] CreateAround(Rectangle r, int thickness, Color color)
+        protected override void OnShown(EventArgs e)
         {
-            return new[]
+            base.OnShown(e);
+            // 표시 과정에서 창 크기가 조정되었더라도 정확한 위치/크기로 다시 맞춤
+            UpdateLayer();
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e) { }
+
+        protected override void OnPaint(PaintEventArgs e) { }
+
+        private void UpdateLayer()
+        {
+            var outer = OuterBounds;
+            int w = outer.Width, h = outer.Height, t = _thickness;
+
+            using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
             {
-                new BorderPieceForm(new Rectangle(r.Left - thickness, r.Top - thickness, r.Width + thickness * 2, thickness), color),
-                new BorderPieceForm(new Rectangle(r.Left - thickness, r.Bottom, r.Width + thickness * 2, thickness), color),
-                new BorderPieceForm(new Rectangle(r.Left - thickness, r.Top, thickness, r.Height), color),
-                new BorderPieceForm(new Rectangle(r.Right, r.Top, thickness, r.Height), color),
-            };
+                using (var g = Graphics.FromImage(bmp))
+                using (var brush = new SolidBrush(_color))
+                {
+                    g.Clear(Color.Transparent);
+                    g.FillRectangle(brush, 0, 0, w, t);          // 위
+                    g.FillRectangle(brush, 0, h - t, w, t);      // 아래
+                    g.FillRectangle(brush, 0, t, t, h - 2 * t);  // 왼쪽
+                    g.FillRectangle(brush, w - t, t, t, h - 2 * t); // 오른쪽
+                }
+                NativeMethods.UpdateLayeredBitmap(Handle, bmp, outer.Location);
+            }
         }
     }
 
