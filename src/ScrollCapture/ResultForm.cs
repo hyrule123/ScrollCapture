@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
@@ -8,7 +9,16 @@ namespace ScrollCapture
 {
     internal sealed class ResultForm : Form
     {
-        private readonly Bitmap _image;
+        private Bitmap _image;
+        private readonly Stack<Bitmap> _undo = new Stack<Bitmap>(); // 크롭 되돌리기용 이전 이미지
+        private readonly string _infoSuffix;
+        private readonly Color _infoColor;
+        private readonly Button _save;
+        private readonly Button _copy;
+        private readonly CheckBox _cropToggle;
+        private readonly Button _cropApply;
+        private readonly Button _cropCancel;
+        private readonly Button _undoButton;
         private readonly ImageViewer _viewer;
         private readonly CheckBox _fit;
         private readonly Label _info;
@@ -48,9 +58,25 @@ namespace ScrollCapture
                 Padding = new Padding(6, 6, 6, 4),
             };
 
-            var save = MakeButton("저장 (Ctrl+S)", (s, e) => Save());
-            var copy = MakeButton("복사 (Ctrl+C)", (s, e) => CopyToClipboard());
+            _save = MakeButton("저장 (Ctrl+S)", (s, e) => Save());
+            _copy = MakeButton("복사 (Ctrl+C)", (s, e) => CopyToClipboard());
             var close = MakeButton("닫기", (s, e) => Close());
+
+            _cropToggle = new CheckBox
+            {
+                Text = "크롭 (Ctrl+R)",
+                Appearance = Appearance.Button,
+                AutoSize = true,
+                Padding = new Padding(6, 2, 6, 2),
+                Margin = new Padding(12, 3, 3, 3),
+            };
+            _cropToggle.CheckedChanged += (s, e) => SetCropMode(_cropToggle.Checked);
+            _cropApply = MakeButton("적용 (Enter)", (s, e) => ApplyCrop());
+            _cropCancel = MakeButton("취소 (Esc)", (s, e) => SetCropMode(false));
+            _undoButton = MakeButton("되돌리기 (Ctrl+Z)", (s, e) => Undo());
+            _cropApply.Visible = false;
+            _cropCancel.Visible = false;
+            _undoButton.Enabled = false;
 
             _fit = new CheckBox
             {
@@ -65,23 +91,25 @@ namespace ScrollCapture
                 AppSettings.Current.ResultFitWidth = _fit.Checked;
             };
 
-            string info = string.Format("{0} × {1:N0} px · 프레임 {2}개", _image.Width, _image.Height, result.Frames);
+            string suffix = string.Format(" · 프레임 {0}개", result.Frames);
             if (result.NoMatchCount > 0)
-                info += string.Format(" · ⚠ 겹침 탐지 실패 {0}회 (스크롤 양을 줄여 보세요)", result.NoMatchCount);
+                suffix += string.Format(" · ⚠ 겹침 탐지 실패 {0}회 (스크롤 양을 줄여 보세요)", result.NoMatchCount);
             if (result.HitMaxHeight)
-                info += " · 최대 높이 도달";
+                suffix += " · 최대 높이 도달";
+            _infoSuffix = suffix;
+            _infoColor = result.NoMatchCount > 0 ? Color.DarkRed : SystemColors.ControlText;
 
             _info = new Label
             {
-                Text = info,
                 AutoSize = true,
                 Margin = new Padding(12, 8, 3, 3),
-                ForeColor = result.NoMatchCount > 0 ? Color.DarkRed : SystemColors.ControlText,
             };
 
-            bar.Controls.AddRange(new Control[] { save, copy, close, _fit, _info });
+            bar.Controls.AddRange(new Control[] { _save, _copy, close, _cropToggle, _cropApply, _cropCancel, _undoButton, _fit, _info });
 
             _viewer = new ImageViewer { Dock = DockStyle.Fill, Image = _image, FitWidth = settings.ResultFitWidth };
+            _viewer.CropSelectionChanged += (s, e) => UpdateCropUi();
+            UpdateInfo();
 
             Controls.Add(_viewer);
             Controls.Add(bar);
@@ -130,9 +158,88 @@ namespace ScrollCapture
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
-            if (e.Control && e.KeyCode == Keys.S) { Save(); e.Handled = true; }
+            bool cropping = _viewer.CropMode;
+            if (e.Control && e.KeyCode == Keys.R) { _cropToggle.Checked = !_cropToggle.Checked; e.Handled = true; }
+            else if (e.Control && e.KeyCode == Keys.Z) { Undo(); e.Handled = true; }
+            else if (cropping && e.KeyCode == Keys.Enter) { ApplyCrop(); e.Handled = true; }
+            else if (cropping && e.KeyCode == Keys.Escape) { SetCropMode(false); e.Handled = true; }
+            else if (cropping) { return; } // 크롭 중에는 저장/복사 단축키 비활성
+            else if (e.Control && e.KeyCode == Keys.S) { Save(); e.Handled = true; }
             else if (e.Control && e.KeyCode == Keys.C) { CopyToClipboard(); e.Handled = true; }
             else if (e.KeyCode == Keys.Escape) { Close(); e.Handled = true; }
+
+            if (e.Handled) e.SuppressKeyPress = true;
+        }
+
+        // ───────────── 크롭 ─────────────
+
+        private void SetCropMode(bool on)
+        {
+            if (_cropToggle.Checked != on) _cropToggle.Checked = on; // CheckedChanged 에서 다시 호출됨
+            if (_viewer.CropMode == on) return;
+
+            _viewer.CropMode = on;
+            _cropApply.Visible = on;
+            _cropCancel.Visible = on;
+            _save.Enabled = !on;
+            _copy.Enabled = !on;
+            UpdateCropUi();
+            _viewer.Focus();
+        }
+
+        private void UpdateCropUi()
+        {
+            _cropApply.Enabled = _viewer.CropMode && !_viewer.CropSelection.IsEmpty;
+            _undoButton.Enabled = _undo.Count > 0;
+        }
+
+        private void ApplyCrop()
+        {
+            var sel = _viewer.CropSelection;
+            if (!_viewer.CropMode || sel.IsEmpty) return;
+
+            if (sel != new Rectangle(0, 0, _image.Width, _image.Height))
+            {
+                Bitmap cropped;
+                try
+                {
+                    cropped = _image.Clone(sel, _image.PixelFormat);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "크롭하지 못했습니다.\n" + ex.Message, "ScrollCapture",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+                _undo.Push(_image);
+                ReplaceImage(cropped);
+            }
+            SetCropMode(false);
+        }
+
+        private void Undo()
+        {
+            if (_undo.Count == 0) return;
+            SetCropMode(false);
+            var current = _image;
+            ReplaceImage(_undo.Pop());
+            current.Dispose();
+            UpdateCropUi();
+        }
+
+        private void ReplaceImage(Bitmap image)
+        {
+            _image = image;
+            _viewer.Image = image;
+            UpdateInfo();
+        }
+
+        private void UpdateInfo()
+        {
+            string text = string.Format("{0} × {1:N0} px", _image.Width, _image.Height);
+            if (_undo.Count > 0) text += " (크롭됨)";
+            _info.Text = text + _infoSuffix;
+            _info.ForeColor = _infoColor;
         }
 
         private void Save()
@@ -228,6 +335,7 @@ namespace ScrollCapture
             {
                 _viewer.Image = null;
                 _image.Dispose();
+                while (_undo.Count > 0) _undo.Pop().Dispose();
             }
             base.Dispose(disposing);
         }
