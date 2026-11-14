@@ -96,6 +96,7 @@ dotnet run --project tests/StitcherTests -c Release
 ```
 
 GitHub Actions가 `main` 푸시마다 exe를 빌드해 Artifacts로 올리고, `v*` 태그를 푸시하면 Release에 첨부합니다.
+태그 이름이 exe 버전이 됩니다 (`v1.2.3` → 1.2.3). 버전은 [유의적 버전](https://semver.org/lang/ko/) 규칙을 따릅니다: 호환되는 기능 추가는 부 버전, 버그 수정은 수 버전을 올립니다.
 
 ## 구조
 

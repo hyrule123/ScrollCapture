@@ -13,7 +13,9 @@
     <Prefer32Bit>false</Prefer32Bit>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
 
-    <Version>1.0.0</Version>
+    <!-- 릴리즈 빌드에서는 태그(v1.2.3)의 버전으로 덮어씀 -->
+    <Version>1.1.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>ScrollCapture</Product>
     <Description>Lightweight standalone scrolling screenshot tool</Description>
     <Copyright>hyrule123</Copyright>

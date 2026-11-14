@@ -23,8 +23,20 @@ jobs:
       - name: Test stitching algorithm
         run: dotnet run --project tests/StitcherTests -c Release
 
+      # v1.2.3 태그로 빌드하면 exe 버전도 1.2.3 으로 설정 (태그가 아니면 csproj 의 Version 사용)
       - name: Build
-        run: dotnet build src/ScrollCapture/ScrollCapture.csproj -c Release
+        shell: pwsh
+        run: |
+          $props = @()
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -match '^v(\d+\.\d+\.\d+.*)$') {
+            $version = $Matches[1]
+            Write-Host "Version from tag: $version"
+            $props += "-p:Version=$version"
+          }
+          dotnet build src/ScrollCapture/ScrollCapture.csproj -c Release @props
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $info = (Get-Item src/ScrollCapture/bin/Release/ScrollCapture.exe).VersionInfo
+          Write-Host "FileVersion: $($info.FileVersion)  ProductVersion: $($info.ProductVersion)"
 
       - name: Upload exe
         uses: actions/upload-artifact@v4
