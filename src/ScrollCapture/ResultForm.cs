@@ -12,6 +12,9 @@ namespace ScrollCapture
         private readonly ImageViewer _viewer;
         private readonly CheckBox _fit;
         private readonly Label _info;
+        private readonly Button _resetCrop;
+        private readonly string _infoSuffix;
+        private readonly Color _infoColor;
 
 
         public ResultForm(CaptureResult result)
@@ -51,6 +54,8 @@ namespace ScrollCapture
             var save = MakeButton("저장 (Ctrl+S)", (s, e) => Save());
             var copy = MakeButton("복사 (Ctrl+C)", (s, e) => CopyToClipboard());
             var close = MakeButton("닫기", (s, e) => Close());
+            _resetCrop = MakeButton("크롭 해제", (s, e) => _viewer.ResetCrop());
+            _resetCrop.Visible = false;
 
             _fit = new CheckBox
             {
@@ -65,23 +70,25 @@ namespace ScrollCapture
                 AppSettings.Current.ResultFitWidth = _fit.Checked;
             };
 
-            string info = string.Format("{0} × {1:N0} px · 프레임 {2}개", _image.Width, _image.Height, result.Frames);
+            string suffix = string.Format(" · 프레임 {0}개", result.Frames);
             if (result.NoMatchCount > 0)
-                info += string.Format(" · ⚠ 겹침 탐지 실패 {0}회 (스크롤 양을 줄여 보세요)", result.NoMatchCount);
+                suffix += string.Format(" · ⚠ 겹침 탐지 실패 {0}회 (스크롤 양을 줄여 보세요)", result.NoMatchCount);
             if (result.HitMaxHeight)
-                info += " · 최대 높이 도달";
+                suffix += " · 최대 높이 도달";
+            _infoSuffix = suffix;
+            _infoColor = result.NoMatchCount > 0 ? Color.DarkRed : SystemColors.ControlText;
 
             _info = new Label
             {
-                Text = info,
                 AutoSize = true,
                 Margin = new Padding(12, 8, 3, 3),
-                ForeColor = result.NoMatchCount > 0 ? Color.DarkRed : SystemColors.ControlText,
             };
 
-            bar.Controls.AddRange(new Control[] { save, copy, close, _fit, _info });
+            bar.Controls.AddRange(new Control[] { save, copy, close, _fit, _resetCrop, _info });
 
             _viewer = new ImageViewer { Dock = DockStyle.Fill, Image = _image, FitWidth = settings.ResultFitWidth };
+            _viewer.CropChanged += (s, e) => UpdateCropInfo();
+            UpdateCropInfo();
 
             Controls.Add(_viewer);
             Controls.Add(bar);
@@ -135,6 +142,31 @@ namespace ScrollCapture
             else if (e.KeyCode == Keys.Escape) { Close(); e.Handled = true; }
         }
 
+        private void UpdateCropInfo()
+        {
+            var c = _viewer.CropRect;
+            bool cropped = _viewer.IsCropped;
+            _resetCrop.Visible = cropped;
+            _info.Text = cropped
+                ? string.Format("{0} × {1:N0} px (원본 {2} × {3:N0}에서 크롭)", c.Width, c.Height, _image.Width, _image.Height) + _infoSuffix
+                : string.Format("{0} × {1:N0} px", _image.Width, _image.Height) + _infoSuffix;
+            _info.ForeColor = _infoColor;
+        }
+
+        /// <summary>
+        /// 내보낼 이미지. 크롭했으면 잘라낸 새 이미지(호출한 쪽에서 Dispose), 아니면 원본.
+        /// </summary>
+        private Bitmap CreateOutputImage(out bool mustDispose)
+        {
+            if (!_viewer.IsCropped)
+            {
+                mustDispose = false;
+                return _image;
+            }
+            mustDispose = true;
+            return _image.Clone(_viewer.CropRect, _image.PixelFormat);
+        }
+
         private void Save()
         {
             using (var dlg = new SaveFileDialog())
@@ -156,26 +188,29 @@ namespace ScrollCapture
 
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
+                bool mustDispose = false;
+                Bitmap output = null;
                 try
                 {
+                    output = CreateOutputImage(out mustDispose);
                     string ext = Path.GetExtension(dlg.FileName).ToLowerInvariant();
                     if (ext == ".jpg" || ext == ".jpeg")
                     {
-                        if (_image.Height > 65500 || _image.Width > 65500)
+                        if (output.Height > 65500 || output.Width > 65500)
                         {
                             MessageBox.Show(this, "JPEG 은 65,500px 보다 큰 이미지를 저장할 수 없습니다. PNG 로 저장해 주세요.",
                                 "ScrollCapture", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                             return;
                         }
-                        SaveJpeg(dlg.FileName, settings.JpegQuality);
+                        SaveJpeg(output, dlg.FileName, settings.JpegQuality);
                     }
                     else if (ext == ".bmp")
                     {
-                        _image.Save(dlg.FileName, ImageFormat.Bmp);
+                        output.Save(dlg.FileName, ImageFormat.Bmp);
                     }
                     else
                     {
-                        _image.Save(dlg.FileName, ImageFormat.Png);
+                        output.Save(dlg.FileName, ImageFormat.Png);
                     }
                     settings.LastDirectory = Path.GetDirectoryName(dlg.FileName);
                     settings.SaveFormatIndex = (ext == ".jpg" || ext == ".jpeg") ? 2 : ext == ".bmp" ? 3 : 1;
@@ -186,10 +221,14 @@ namespace ScrollCapture
                     MessageBox.Show(this, "저장하지 못했습니다.\n" + ex.Message, "ScrollCapture",
                         MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
+                finally
+                {
+                    if (mustDispose && output != null) output.Dispose();
+                }
             }
         }
 
-        private void SaveJpeg(string path, long quality)
+        private static void SaveJpeg(Bitmap image, string path, long quality)
         {
             ImageCodecInfo codec = null;
             foreach (var c in ImageCodecInfo.GetImageEncoders())
@@ -197,14 +236,14 @@ namespace ScrollCapture
 
             if (codec == null)
             {
-                _image.Save(path, ImageFormat.Jpeg);
+                image.Save(path, ImageFormat.Jpeg);
                 return;
             }
 
             using (var p = new EncoderParameters(1))
             {
                 p.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
-                _image.Save(path, codec, p);
+                image.Save(path, codec, p);
             }
         }
 
@@ -212,7 +251,10 @@ namespace ScrollCapture
         {
             try
             {
-                Clipboard.SetImage(_image);
+                bool mustDispose;
+                var output = CreateOutputImage(out mustDispose);
+                try { Clipboard.SetImage(output); }
+                finally { if (mustDispose) output.Dispose(); }
                 _info.Text = "클립보드에 복사했습니다.";
             }
             catch (Exception ex)
