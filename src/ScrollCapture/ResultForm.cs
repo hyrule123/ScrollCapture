@@ -11,6 +11,7 @@ namespace ScrollCapture
         private readonly Bitmap _image;
         private readonly ImageViewer _viewer;
         private readonly Label _zoomLabel;
+        private bool _closing; // Dispose 중에는 UI 갱신을 하지 않음
         private readonly Label _info;
         private readonly Button _resetCrop;
         private readonly string _infoSuffix;
@@ -120,6 +121,7 @@ namespace ScrollCapture
 
         private void UpdateCropInfo()
         {
+            if (_closing) return;
             var c = _viewer.CropRect;
             bool cropped = _viewer.IsCropped;
             _resetCrop.Visible = cropped;
@@ -242,8 +244,10 @@ namespace ScrollCapture
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing)
+            // 닫을 때 Dispose 가 두 번 불릴 수 있으므로 한 번만 정리
+            if (disposing && !_closing)
             {
+                _closing = true;
                 _viewer.Image = null;
                 _image.Dispose();
             }

@@ -291,7 +291,6 @@ namespace ScrollCapture
             {
                 bool wasCurrent = ReferenceEquals(_resultForm, form);
                 if (wasCurrent) _resultForm = null;
-                form.Dispose();
                 // 사용자가 결과 창을 닫으면 메인 창으로 포커스를 돌려줌
                 if (wasCurrent) FocusMainWindow();
             };
