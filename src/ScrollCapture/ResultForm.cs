@@ -10,37 +10,31 @@ namespace ScrollCapture
     {
         private readonly Bitmap _image;
         private readonly ImageViewer _viewer;
-        private readonly CheckBox _fit;
+        private readonly Label _zoomLabel;
         private readonly Label _info;
         private readonly Button _resetCrop;
         private readonly string _infoSuffix;
         private readonly Color _infoColor;
 
 
-        public ResultForm(CaptureResult result)
+        /// <param name="screen">결과 창을 띄울 모니터 (메인 창이 있는 모니터)</param>
+        public ResultForm(CaptureResult result, Screen screen)
         {
             _image = result.Image;
 
             Text = "ScrollCapture - 결과";
             Font = new Font("Segoe UI", 9f);
-            StartPosition = FormStartPosition.CenterScreen;
             KeyPreview = true;
             Icon = Program.AppIcon;
-
-            var settings = AppSettings.Current;
-            var wa = Screen.PrimaryScreen.WorkingArea;
             MinimumSize = new Size(480, 320);
-            if (settings.ResultSize.HasValue)
-            {
-                // 저장된 크기 사용 (화면보다 크면 화면에 맞춤)
-                var saved = settings.ResultSize.Value;
-                Size = new Size(Math.Min(saved.Width, wa.Width), Math.Min(saved.Height, wa.Height));
-            }
-            else
-            {
-                Size = new Size(Math.Min(wa.Width * 2 / 3, Math.Max(640, _image.Width + 60)), wa.Height * 5 / 6);
-            }
-            if (settings.ResultMaximized) WindowState = FormWindowState.Maximized;
+
+            // 창 크기: 가로 max(800, 모니터 가로/2), 세로 max(600, 모니터 세로/2), 작업 영역을 넘지 않게
+            var mon = screen.Bounds;
+            var wa = screen.WorkingArea;
+            int w = Math.Min(Math.Max(800, mon.Width / 2), wa.Width);
+            int h = Math.Min(Math.Max(600, mon.Height / 2), wa.Height);
+            StartPosition = FormStartPosition.Manual;
+            Bounds = new Rectangle(wa.Left + (wa.Width - w) / 2, wa.Top + (wa.Height - h) / 2, w, h);
 
             var bar = new FlowLayoutPanel
             {
@@ -57,17 +51,11 @@ namespace ScrollCapture
             _resetCrop = MakeButton("크롭 해제", (s, e) => _viewer.ResetCrop());
             _resetCrop.Visible = false;
 
-            _fit = new CheckBox
+            _zoomLabel = new Label
             {
-                Text = "창 너비에 맞춤",
-                Checked = settings.ResultFitWidth,
                 AutoSize = true,
                 Margin = new Padding(12, 8, 3, 3),
-            };
-            _fit.CheckedChanged += (s, e) =>
-            {
-                _viewer.FitWidth = _fit.Checked;
-                AppSettings.Current.ResultFitWidth = _fit.Checked;
+                ForeColor = SystemColors.GrayText,
             };
 
             string suffix = string.Format(" · 프레임 {0}개", result.Frames);
@@ -84,10 +72,11 @@ namespace ScrollCapture
                 Margin = new Padding(12, 8, 3, 3),
             };
 
-            bar.Controls.AddRange(new Control[] { save, copy, close, _fit, _resetCrop, _info });
+            bar.Controls.AddRange(new Control[] { save, copy, close, _zoomLabel, _resetCrop, _info });
 
-            _viewer = new ImageViewer { Dock = DockStyle.Fill, Image = _image, FitWidth = settings.ResultFitWidth };
+            _viewer = new ImageViewer { Dock = DockStyle.Fill, Image = _image };
             _viewer.CropChanged += (s, e) => UpdateCropInfo();
+            _viewer.ZoomChanged += (s, e) => _zoomLabel.Text = string.Format("{0:0}%", _viewer.Zoom * 100f);
             UpdateCropInfo();
 
             Controls.Add(_viewer);
@@ -107,31 +96,18 @@ namespace ScrollCapture
             return b;
         }
 
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            // 레이아웃이 끝나 미리보기 크기가 정해진 뒤 시작 배율 결정 (창 크기를 바꿔도 배율은 유지)
+            PerformLayout();
+            _viewer.ResetZoomToFitWidth();
+        }
+
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
             _viewer.Focus();
-        }
-
-        protected override void OnResizeEnd(EventArgs e)
-        {
-            base.OnResizeEnd(e);
-            RememberWindowState();
-        }
-
-        protected override void OnSizeChanged(EventArgs e)
-        {
-            base.OnSizeChanged(e);
-            // 최대화/복원 버튼은 ResizeEnd 를 발생시키지 않으므로 여기서도 기록
-            if (IsHandleCreated && Visible) RememberWindowState();
-        }
-
-        private void RememberWindowState()
-        {
-            if (WindowState == FormWindowState.Minimized) return;
-            var s = AppSettings.Current;
-            s.ResultMaximized = WindowState == FormWindowState.Maximized;
-            s.ResultSize = WindowState == FormWindowState.Normal ? Size : RestoreBounds.Size;
         }
 
         protected override void OnKeyDown(KeyEventArgs e)

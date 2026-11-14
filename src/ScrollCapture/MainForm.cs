@@ -286,7 +286,7 @@ namespace ScrollCapture
 
         private void ShowResult(CaptureResult result)
         {
-            var form = new ResultForm(result);
+            var form = new ResultForm(result, Screen.FromControl(this));
             form.FormClosed += (s, e) =>
             {
                 bool wasCurrent = ReferenceEquals(_resultForm, form);

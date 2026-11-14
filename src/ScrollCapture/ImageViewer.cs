@@ -6,7 +6,7 @@ using System.Windows.Forms;
 namespace ScrollCapture
 {
     /// <summary>
-    /// 매우 긴 이미지도 표시할 수 있는 간단한 뷰어.
+    /// 매우 긴 이미지도 표시할 수 있는 간단한 뷰어. Ctrl+휠로 10%~800% 확대/축소.
     /// (PictureBox + AutoScroll 은 32767px 를 넘는 크기에서 문제가 생기므로 직접 그림)
     /// 크롭: 이미지 테두리(가장자리/모서리 손잡이)를 안쪽으로 드래그해 남길 영역을 조절합니다.
     /// 원본 이미지는 바뀌지 않고, 잘려 나갈 부분만 어둡게 표시됩니다. (실제 자르기는 저장/복사 시)
@@ -32,7 +32,11 @@ namespace ScrollCapture
         private readonly HScrollBar _h = new HScrollBar();
         private readonly Timer _autoScrollTimer = new Timer { Interval = 15 };
         private Image _image;
-        private bool _fitWidth = true;
+        private float _zoom = 1f;      // 표시 배율 (1 = 100%)
+
+        public const float MinZoom = 0.1f;
+        public const float MaxZoom = 8f;
+        private const float ZoomStepRatio = 1.25f;
 
         // 크롭 상태 (이미지 좌표). 기본값은 이미지 전체
         private Rectangle _crop;
@@ -41,6 +45,9 @@ namespace ScrollCapture
         private Point _lastMouse;      // 클라이언트 좌표
 
         public event EventHandler CropChanged;
+
+        /// <summary>표시 배율이 바뀌었을 때.</summary>
+        public event EventHandler ZoomChanged;
 
         public ImageViewer()
         {
@@ -74,19 +81,61 @@ namespace ScrollCapture
             }
         }
 
-        /// <summary>true 이면 창 너비에 맞춰 축소, false 이면 원본 크기(100%).</summary>
-        public bool FitWidth
+        /// <summary>현재 표시 배율 (1 = 100%).</summary>
+        public float Zoom
         {
-            get { return _fitWidth; }
-            set
-            {
-                if (_fitWidth == value) return;
-                double ratio = _v.Maximum > 0 ? (double)_v.Value / _v.Maximum : 0;
-                _fitWidth = value;
-                UpdateScrollBars();
-                _v.Value = Clamp((int)(ratio * _v.Maximum), 0, MaxValue(_v));
-                Invalidate();
-            }
+            get { return _zoom; }
+        }
+
+        /// <summary>
+        /// 시작 배율: 이미지 가로가 미리보기보다 넓으면 가로가 맞도록 축소(최소 10%), 아니면 100%.
+        /// </summary>
+        public void ResetZoomToFitWidth()
+        {
+            if (_image == null) return;
+            // 세로가 길면 스크롤바가 생기므로 그만큼 뺀 너비 기준
+            int availW = ClientSize.Width - _v.Width;
+            float zoom = 1f;
+            if (availW > 0 && _image.Width > availW)
+                zoom = Math.Max(MinZoom, (float)availW / _image.Width);
+            _zoom = zoom;
+            _v.Value = 0;
+            _h.Value = 0;
+            UpdateScrollBars();
+            Invalidate();
+            RaiseZoomChanged();
+        }
+
+        /// <summary>한 단계 확대/축소 (direction &gt; 0 확대). 기준점(클라이언트 좌표) 아래의 이미지 위치를 유지.</summary>
+        private void ZoomStep(int direction, Point anchor)
+        {
+            if (_image == null || direction == 0) return;
+            float old = _zoom;
+            float next = direction > 0 ? old * ZoomStepRatio : old / ZoomStepRatio;
+            // 100% 를 지나가면 한 번 100% 에서 멈춤
+            if ((old < 1f && next > 1f) || (old > 1f && next < 1f)) next = 1f;
+            next = Math.Max(MinZoom, Math.Min(MaxZoom, next));
+            if (Math.Abs(next - old) < 0.0001f) return;
+
+            // 기준점 아래의 이미지 좌표
+            var o = ImageOrigin;
+            float ix = (anchor.X - o.X) / old;
+            float iy = (anchor.Y - o.Y) / old;
+
+            _zoom = next;
+            UpdateScrollBars();
+            if (_v.Visible) _v.Value = Clamp((int)Math.Round(iy * next - anchor.Y), 0, MaxValue(_v));
+            if (_h.Visible) _h.Value = Clamp((int)Math.Round(ix * next - anchor.X), 0, MaxValue(_h));
+
+            if (_dragging) UpdateDrag();
+            Invalidate();
+            RaiseZoomChanged();
+        }
+
+        private void RaiseZoomChanged()
+        {
+            var handler = ZoomChanged;
+            if (handler != null) handler(this, EventArgs.Empty);
         }
 
         /// <summary>남길 영역 (이미지 좌표). 크롭하지 않았으면 이미지 전체.</summary>
@@ -129,13 +178,7 @@ namespace ScrollCapture
 
         private float ScaleFactor
         {
-            get
-            {
-                if (_image == null || !_fitWidth) return 1f;
-                int availW = ClientSize.Width - _v.Width;
-                if (availW <= 0) return 1f;
-                return Math.Min(1f, (float)availW / _image.Width);
-            }
+            get { return _zoom; }
         }
 
         /// <summary>이미지 왼쪽 위 모서리의 클라이언트 좌표.</summary>
@@ -237,6 +280,12 @@ namespace ScrollCapture
         {
             base.OnMouseWheel(e);
             if (_image == null) return;
+            if ((ModifierKeys & Keys.Control) != 0)
+            {
+                // Ctrl + 휠: 마우스 위치를 기준으로 확대/축소
+                ZoomStep(Math.Sign(e.Delta), e.Location);
+                return;
+            }
             var bar = (ModifierKeys & Keys.Shift) != 0 ? (ScrollBar)_h : _v;
             int step = Math.Max(1, bar.LargeChange / 4);
             ScrollBy(bar, -Math.Sign(e.Delta) * step * Math.Max(1, Math.Abs(e.Delta) / 120));
@@ -428,7 +477,8 @@ namespace ScrollCapture
             if (srcH > 0 && srcW > 0)
             {
                 var dest = new RectangleF(Math.Max(0, origin.X), 0, srcW * s, srcH * s);
-                g.InterpolationMode = s < 1f ? InterpolationMode.HighQualityBicubic : InterpolationMode.NearestNeighbor;
+                // 확대/축소 모두 보간 없이 그림
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
                 g.PixelOffsetMode = PixelOffsetMode.Half;
                 g.DrawImage(_image, dest, new RectangleF(srcX, srcY, srcW, srcH), GraphicsUnit.Pixel);
             }

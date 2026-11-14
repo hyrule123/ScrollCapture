@@ -31,11 +31,6 @@ namespace ScrollCapture
         // [MainWindow]
         public Point? MainLocation;
 
-        // [ResultWindow]
-        public Size? ResultSize;
-        public bool ResultMaximized;
-        public bool ResultFitWidth = true;
-
         // [Save]
         public string LastDirectory = "";
         public int SaveFormatIndex = 1; // 1=PNG, 2=JPEG, 3=BMP (SaveFileDialog.FilterIndex)
@@ -97,12 +92,6 @@ namespace ScrollCapture
             sb.AppendLine("X=" + (MainLocation.HasValue ? I(MainLocation.Value.X) : ""));
             sb.AppendLine("Y=" + (MainLocation.HasValue ? I(MainLocation.Value.Y) : ""));
             sb.AppendLine();
-            sb.AppendLine("[ResultWindow]");
-            sb.AppendLine("Width=" + (ResultSize.HasValue ? I(ResultSize.Value.Width) : ""));
-            sb.AppendLine("Height=" + (ResultSize.HasValue ? I(ResultSize.Value.Height) : ""));
-            sb.AppendLine("Maximized=" + (ResultMaximized ? "1" : "0"));
-            sb.AppendLine("FitWidth=" + (ResultFitWidth ? "1" : "0"));
-            sb.AppendLine();
             sb.AppendLine("[Save]");
             sb.AppendLine("LastDirectory=" + (LastDirectory ?? ""));
             sb.AppendLine("; PNG, JPEG, BMP");
@@ -124,12 +113,6 @@ namespace ScrollCapture
             int x, y;
             if (TryInt(v, "mainwindow.x", out x) && TryInt(v, "mainwindow.y", out y))
                 MainLocation = new Point(x, y);
-
-            int w, h;
-            if (TryInt(v, "resultwindow.width", out w) && TryInt(v, "resultwindow.height", out h) && w > 0 && h > 0)
-                ResultSize = new Size(w, h);
-            ResultMaximized = GetBool(v, "resultwindow.maximized", ResultMaximized);
-            ResultFitWidth = GetBool(v, "resultwindow.fitwidth", ResultFitWidth);
 
             if (v.TryGetValue("save.lastdirectory", out s)) LastDirectory = s.Trim();
             if (v.TryGetValue("save.format", out s))
@@ -177,16 +160,6 @@ namespace ScrollCapture
             int value;
             if (!TryInt(v, key, out value)) return fallback;
             return Math.Max(min, Math.Min(max, value));
-        }
-
-        private static bool GetBool(Dictionary<string, string> v, string key, bool fallback)
-        {
-            string s;
-            if (!v.TryGetValue(key, out s)) return fallback;
-            s = s.Trim().ToLowerInvariant();
-            if (s == "1" || s == "true" || s == "yes") return true;
-            if (s == "0" || s == "false" || s == "no") return false;
-            return fallback;
         }
     }
 }
