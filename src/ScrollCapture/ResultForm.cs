@@ -13,6 +13,8 @@ namespace ScrollCapture
         private readonly CheckBox _fit;
         private readonly Label _info;
         private readonly Button _resetCrop;
+        private readonly Label _zoomLabel;
+        private bool _syncingFit;
         private readonly string _infoSuffix;
         private readonly Color _infoColor;
 
@@ -66,8 +68,16 @@ namespace ScrollCapture
             };
             _fit.CheckedChanged += (s, e) =>
             {
+                if (_syncingFit) return;
                 _viewer.FitWidth = _fit.Checked;
-                AppSettings.Current.ResultFitWidth = _fit.Checked;
+                AppSettings.Current.ResultFitWidth = _fit.Checked; // 사용자가 직접 바꾼 경우만 기억
+            };
+
+            _zoomLabel = new Label
+            {
+                AutoSize = true,
+                Margin = new Padding(3, 8, 3, 3),
+                ForeColor = SystemColors.GrayText,
             };
 
             string suffix = string.Format(" · 프레임 {0}개", result.Frames);
@@ -84,11 +94,13 @@ namespace ScrollCapture
                 Margin = new Padding(12, 8, 3, 3),
             };
 
-            bar.Controls.AddRange(new Control[] { save, copy, close, _fit, _resetCrop, _info });
+            bar.Controls.AddRange(new Control[] { save, copy, close, _fit, _zoomLabel, _resetCrop, _info });
 
             _viewer = new ImageViewer { Dock = DockStyle.Fill, Image = _image, FitWidth = settings.ResultFitWidth };
             _viewer.CropChanged += (s, e) => UpdateCropInfo();
+            _viewer.ZoomChanged += (s, e) => UpdateZoomUi();
             UpdateCropInfo();
+            UpdateZoomUi();
 
             Controls.Add(_viewer);
             Controls.Add(bar);
@@ -137,9 +149,24 @@ namespace ScrollCapture
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
-            if (e.Control && e.KeyCode == Keys.S) { Save(); e.Handled = true; }
+            if (e.Control && (e.KeyCode == Keys.D0 || e.KeyCode == Keys.NumPad0)) { _viewer.ZoomTo(1f); e.Handled = true; }
+            else if (e.Control && (e.KeyCode == Keys.Oemplus || e.KeyCode == Keys.Add)) { _viewer.ZoomStep(1); e.Handled = true; }
+            else if (e.Control && (e.KeyCode == Keys.OemMinus || e.KeyCode == Keys.Subtract)) { _viewer.ZoomStep(-1); e.Handled = true; }
+            else if (e.Control && e.KeyCode == Keys.S) { Save(); e.Handled = true; }
             else if (e.Control && e.KeyCode == Keys.C) { CopyToClipboard(); e.Handled = true; }
             else if (e.KeyCode == Keys.Escape) { Close(); e.Handled = true; }
+        }
+
+        private void UpdateZoomUi()
+        {
+            // Ctrl+휠로 배율을 바꾸면 "창 너비에 맞춤" 체크를 해제 (ini 에는 반영하지 않음)
+            if (_fit.Checked != _viewer.FitWidth)
+            {
+                _syncingFit = true;
+                _fit.Checked = _viewer.FitWidth;
+                _syncingFit = false;
+            }
+            _zoomLabel.Text = string.Format("{0:0}%", _viewer.Zoom * 100f);
         }
 
         private void UpdateCropInfo()
