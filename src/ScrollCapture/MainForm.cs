@@ -18,6 +18,12 @@ namespace ScrollCapture
         private bool _busy;
         private ResultForm _resultForm; // 결과 창은 하나만 유지
 
+        // 모드별로 따로 기억하는 대기 시간 / 캡처 간격
+        private int _autoDelayMs;
+        private int _manualIntervalMs;
+        private bool _lastModeManual;
+        private bool _saveErrorShown;
+
         public MainForm()
         {
             Text = "ScrollCapture";
@@ -55,8 +61,13 @@ namespace ScrollCapture
             table.Controls.Add(_startButton, 0, 0);
             table.SetColumnSpan(_startButton, 2);
 
-            _autoMode = new RadioButton { Text = "자동 스크롤", Checked = true, AutoSize = true };
-            _manualMode = new RadioButton { Text = "직접 스크롤", AutoSize = true };
+            var settings = AppSettings.Current;
+            _autoDelayMs = settings.AutoDelayMs;
+            _manualIntervalMs = settings.ManualIntervalMs;
+            _lastModeManual = settings.ManualScroll;
+
+            _autoMode = new RadioButton { Text = "자동 스크롤", Checked = !settings.ManualScroll, AutoSize = true };
+            _manualMode = new RadioButton { Text = "직접 스크롤", Checked = settings.ManualScroll, AutoSize = true };
             _autoMode.CheckedChanged += (s, e) => UpdateModeUi();
             var modePanel = new FlowLayoutPanel
             {
@@ -70,14 +81,14 @@ namespace ScrollCapture
             AddRow(table, 1, MakeLabel("모드"), modePanel);
 
             _notchLabel = MakeLabel("스크롤 양 (휠 칸)");
-            _notches = MakeNumber(1, 30, 3, 1);
+            _notches = MakeNumber(1, 30, settings.WheelNotches, 1);
             AddRow(table, 2, _notchLabel, _notches);
 
             _delayLabel = MakeLabel("대기 시간 (ms)");
-            _delay = MakeNumber(30, 5000, 300, 50);
+            _delay = MakeNumber(30, 5000, settings.ManualScroll ? settings.ManualIntervalMs : settings.AutoDelayMs, 10);
             AddRow(table, 3, _delayLabel, _delay);
 
-            _maxHeight = MakeNumber(500, 200000, 30000, 1000);
+            _maxHeight = MakeNumber(500, 200000, settings.MaxHeight, 1000);
             _maxHeight.ThousandsSeparator = true;
             AddRow(table, 4, MakeLabel("최대 높이 (px)"), _maxHeight);
 
@@ -135,8 +146,65 @@ namespace ScrollCapture
             _notches.Enabled = !manual;
             _notchLabel.Enabled = !manual;
             _delayLabel.Text = manual ? "캡처 간격 (ms)" : "대기 시간 (ms)";
-            if (manual && _delay.Value > 200) _delay.Value = 100;
-            else if (!manual && _delay.Value < 150) _delay.Value = 300;
+
+            // 모드가 바뀌면 이전 모드의 값을 기억하고, 새 모드의 값을 불러옴
+            if (manual != _lastModeManual)
+            {
+                if (_lastModeManual) _manualIntervalMs = (int)_delay.Value;
+                else _autoDelayMs = (int)_delay.Value;
+                _delay.Value = manual ? _manualIntervalMs : _autoDelayMs;
+                _lastModeManual = manual;
+            }
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+
+            // 저장된 위치가 현재 화면 안에 있으면 복원
+            var saved = AppSettings.Current.MainLocation;
+            if (saved.HasValue)
+            {
+                var bounds = new Rectangle(saved.Value, Size);
+                foreach (var screen in Screen.AllScreens)
+                {
+                    var visible = Rectangle.Intersect(screen.WorkingArea, bounds);
+                    if (visible.Width >= 80 && visible.Height >= 40)
+                    {
+                        Location = saved.Value;
+                        break;
+                    }
+                }
+            }
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            base.OnFormClosing(e);
+            if (!e.Cancel) SaveSettings();
+        }
+
+        /// <summary>현재 UI 값을 설정에 반영하고 ini 파일로 저장합니다.</summary>
+        private void SaveSettings()
+        {
+            var s = AppSettings.Current;
+            s.ManualScroll = _manualMode.Checked;
+            s.WheelNotches = (int)_notches.Value;
+            if (_manualMode.Checked) { _manualIntervalMs = (int)_delay.Value; }
+            else { _autoDelayMs = (int)_delay.Value; }
+            s.AutoDelayMs = _autoDelayMs;
+            s.ManualIntervalMs = _manualIntervalMs;
+            s.MaxHeight = (int)_maxHeight.Value;
+            if (WindowState == FormWindowState.Normal) s.MainLocation = Location;
+
+            if (!s.Save() && !_saveErrorShown)
+            {
+                _saveErrorShown = true;
+                MessageBox.Show(this,
+                    "설정 파일을 저장하지 못했습니다.\n" + AppSettings.FilePath + "\n\n" + s.LastError +
+                    "\n\n쓰기 권한이 있는 폴더(예: 바탕화면, 문서)로 프로그램을 옮기면 설정이 저장됩니다.",
+                    "ScrollCapture", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
@@ -161,6 +229,8 @@ namespace ScrollCapture
                 DelayMs = (int)_delay.Value,
                 MaxHeight = (int)_maxHeight.Value,
             };
+
+            SaveSettings();
 
             bool hidResult = false;
             try

@@ -18,6 +18,7 @@ namespace ScrollCapture
             try { AppIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
             catch { AppIcon = null; }
 
+            AppSettings.Load();
             Application.Run(new MainForm());
         }
     }

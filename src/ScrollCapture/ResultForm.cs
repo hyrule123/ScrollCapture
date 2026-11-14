@@ -13,7 +13,6 @@ namespace ScrollCapture
         private readonly CheckBox _fit;
         private readonly Label _info;
 
-        private static string _lastDirectory;
 
         public ResultForm(CaptureResult result)
         {
@@ -25,9 +24,20 @@ namespace ScrollCapture
             KeyPreview = true;
             Icon = Program.AppIcon;
 
+            var settings = AppSettings.Current;
             var wa = Screen.PrimaryScreen.WorkingArea;
-            Size = new Size(Math.Min(wa.Width * 2 / 3, Math.Max(640, _image.Width + 60)), wa.Height * 5 / 6);
             MinimumSize = new Size(480, 320);
+            if (settings.ResultSize.HasValue)
+            {
+                // 저장된 크기 사용 (화면보다 크면 화면에 맞춤)
+                var saved = settings.ResultSize.Value;
+                Size = new Size(Math.Min(saved.Width, wa.Width), Math.Min(saved.Height, wa.Height));
+            }
+            else
+            {
+                Size = new Size(Math.Min(wa.Width * 2 / 3, Math.Max(640, _image.Width + 60)), wa.Height * 5 / 6);
+            }
+            if (settings.ResultMaximized) WindowState = FormWindowState.Maximized;
 
             var bar = new FlowLayoutPanel
             {
@@ -45,11 +55,15 @@ namespace ScrollCapture
             _fit = new CheckBox
             {
                 Text = "창 너비에 맞춤",
-                Checked = true,
+                Checked = settings.ResultFitWidth,
                 AutoSize = true,
                 Margin = new Padding(12, 8, 3, 3),
             };
-            _fit.CheckedChanged += (s, e) => _viewer.FitWidth = _fit.Checked;
+            _fit.CheckedChanged += (s, e) =>
+            {
+                _viewer.FitWidth = _fit.Checked;
+                AppSettings.Current.ResultFitWidth = _fit.Checked;
+            };
 
             string info = string.Format("{0} × {1:N0} px · 프레임 {2}개", _image.Width, _image.Height, result.Frames);
             if (result.NoMatchCount > 0)
@@ -67,7 +81,7 @@ namespace ScrollCapture
 
             bar.Controls.AddRange(new Control[] { save, copy, close, _fit, _info });
 
-            _viewer = new ImageViewer { Dock = DockStyle.Fill, Image = _image };
+            _viewer = new ImageViewer { Dock = DockStyle.Fill, Image = _image, FitWidth = settings.ResultFitWidth };
 
             Controls.Add(_viewer);
             Controls.Add(bar);
@@ -92,6 +106,27 @@ namespace ScrollCapture
             _viewer.Focus();
         }
 
+        protected override void OnResizeEnd(EventArgs e)
+        {
+            base.OnResizeEnd(e);
+            RememberWindowState();
+        }
+
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            base.OnSizeChanged(e);
+            // 최대화/복원 버튼은 ResizeEnd 를 발생시키지 않으므로 여기서도 기록
+            if (IsHandleCreated && Visible) RememberWindowState();
+        }
+
+        private void RememberWindowState()
+        {
+            if (WindowState == FormWindowState.Minimized) return;
+            var s = AppSettings.Current;
+            s.ResultMaximized = WindowState == FormWindowState.Maximized;
+            s.ResultSize = WindowState == FormWindowState.Normal ? Size : RestoreBounds.Size;
+        }
+
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
@@ -106,11 +141,16 @@ namespace ScrollCapture
             {
                 dlg.Title = "캡처 이미지 저장";
                 dlg.Filter = "PNG 이미지 (*.png)|*.png|JPEG 이미지 (*.jpg)|*.jpg|BMP 이미지 (*.bmp)|*.bmp";
-                dlg.FileName = "ScrollCapture_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".png";
+                var settings = AppSettings.Current;
+                int format = settings.SaveFormatIndex >= 1 && settings.SaveFormatIndex <= 3 ? settings.SaveFormatIndex : 1;
+                string defaultExt = format == 2 ? ".jpg" : format == 3 ? ".bmp" : ".png";
+                dlg.FilterIndex = format;
+                dlg.FileName = "ScrollCapture_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + defaultExt;
                 dlg.AddExtension = true;
                 dlg.OverwritePrompt = true;
-                if (!string.IsNullOrEmpty(_lastDirectory) && Directory.Exists(_lastDirectory))
-                    dlg.InitialDirectory = _lastDirectory;
+                string lastDir = settings.LastDirectory;
+                if (!string.IsNullOrEmpty(lastDir) && Directory.Exists(lastDir))
+                    dlg.InitialDirectory = lastDir;
                 else
                     dlg.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
 
@@ -127,7 +167,7 @@ namespace ScrollCapture
                                 "ScrollCapture", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                             return;
                         }
-                        SaveJpeg(dlg.FileName, 92);
+                        SaveJpeg(dlg.FileName, settings.JpegQuality);
                     }
                     else if (ext == ".bmp")
                     {
@@ -137,7 +177,8 @@ namespace ScrollCapture
                     {
                         _image.Save(dlg.FileName, ImageFormat.Png);
                     }
-                    _lastDirectory = Path.GetDirectoryName(dlg.FileName);
+                    settings.LastDirectory = Path.GetDirectoryName(dlg.FileName);
+                    settings.SaveFormatIndex = (ext == ".jpg" || ext == ".jpeg") ? 2 : ext == ".bmp" ? 3 : 1;
                     _info.Text = "저장됨: " + dlg.FileName;
                 }
                 catch (Exception ex)

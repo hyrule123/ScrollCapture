@@ -41,6 +41,38 @@
 | 캡처 간격 (ms) | 직접 스크롤 모드에서 캡처 주기 | 100 |
 | 최대 높이 (px) | 결과 이미지 높이 제한 | 30,000 |
 
+### 설정 파일 (ScrollCapture.ini)
+
+설정은 **실행 파일과 같은 폴더**의 `ScrollCapture.ini`에 저장됩니다 (캡처 시작 시, 프로그램 종료 시 자동 저장).
+파일을 지우면 기본값으로 돌아가며, 메모장으로 직접 수정해도 됩니다.
+
+```ini
+[Capture]
+Mode=Auto              ; Auto = 자동 스크롤, Manual = 직접 스크롤
+WheelNotches=3
+AutoDelayMs=300        ; 자동 모드 대기 시간
+ManualIntervalMs=100   ; 직접 스크롤 모드 캡처 간격
+MaxHeight=30000
+
+[MainWindow]
+X=...                  ; 마지막 창 위치
+Y=...
+
+[ResultWindow]
+Width=...              ; 마지막 결과 창 크기
+Height=...
+Maximized=0
+FitWidth=1             ; 창 너비에 맞춤
+
+[Save]
+LastDirectory=...      ; 마지막 저장 폴더
+Format=PNG             ; PNG, JPEG, BMP (마지막으로 저장한 형식)
+JpegQuality=92         ; 1~100
+```
+
+> `C:\Program Files` 처럼 쓰기 권한이 없는 폴더에 두면 설정을 저장할 수 없습니다 (경고가 한 번 표시됨).
+> 바탕화면, 문서 등 일반 폴더에 두고 사용하세요.
+
 ### 팁
 
 - 스크롤바나 움직이는 요소(광고, 애니메이션)는 가급적 선택 영역에서 빼면 더 정확합니다.
@@ -70,6 +102,7 @@ GitHub Actions가 `main` 푸시마다 exe를 빌드해 Artifacts로 올리고, `
 ```
 src/ScrollCapture/
   Program.cs            진입점, DPI 설정
+  AppSettings.cs        ScrollCapture.ini 읽기/쓰기
   MainForm.cs           메인 창 (옵션, 시작 버튼)
   RegionSelectForm.cs   영역/창 선택 오버레이
   CaptureSession.cs     스크롤 + 캡처 루프
