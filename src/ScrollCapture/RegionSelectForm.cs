@@ -24,6 +24,9 @@ namespace ScrollCapture
         private Rectangle _selection;      // 클라이언트 좌표
         private Rectangle _hover;          // 클라이언트 좌표
         private Point _lastHoverPt = new Point(int.MinValue, int.MinValue);
+        private Rectangle _hintMonitor;    // 안내 문구를 표시할 모니터 (화면 좌표)
+
+        private const string HintText = "드래그: 영역 선택   ·   클릭: 창/컨트롤 선택   ·   Esc / 우클릭: 취소";
 
         public Rectangle SelectedRegion { get; private set; } // 화면 좌표
 
@@ -32,6 +35,7 @@ namespace ScrollCapture
             _screen = screenshot;
             _virtual = virtualBounds;
             _dimmed = CreateDimmed(screenshot);
+            _hintMonitor = Screen.FromPoint(Cursor.Position).Bounds;
 
             AutoScaleMode = AutoScaleMode.None;
             FormBorderStyle = FormBorderStyle.None;
@@ -67,7 +71,9 @@ namespace ScrollCapture
         {
             base.OnShown(e);
             Activate();
-            UpdateHover(PointToClient(Cursor.Position));
+            var client = PointToClient(Cursor.Position);
+            UpdateHintMonitor(client);
+            UpdateHover(client);
         }
 
         private Rectangle Current
@@ -103,10 +109,35 @@ namespace ScrollCapture
                 DrawLabel(g, sizeText, new Point(rect.Left, rect.Top - 26 >= 0 ? rect.Top - 26 : rect.Top + 4));
             }
 
-            // 안내 문구 (주 모니터 상단)
-            var primary = Screen.PrimaryScreen.Bounds;
-            var hintPos = new Point(primary.X - _virtual.X + 16, primary.Y - _virtual.Y + 16);
-            DrawLabel(g, "드래그: 영역 선택   ·   클릭: 창/컨트롤 선택   ·   Esc / 우클릭: 취소", hintPos);
+            // 안내 문구 (마우스가 있는 모니터 왼쪽 위)
+            if (!_hintMonitor.IsEmpty)
+                DrawLabel(g, HintText, HintPosition(_hintMonitor));
+        }
+
+        private Point HintPosition(Rectangle monitor)
+        {
+            return new Point(monitor.X - _virtual.X + 16, monitor.Y - _virtual.Y + 16);
+        }
+
+        /// <summary>안내 문구가 차지하는 영역 (클라이언트 좌표).</summary>
+        private Rectangle HintArea(Rectangle monitor)
+        {
+            var size = TextRenderer.MeasureText(HintText, _font);
+            var r = new Rectangle(HintPosition(monitor), new Size(size.Width + 12, size.Height + 6));
+            r.Inflate(4, 4);
+            return r;
+        }
+
+        /// <summary>마우스가 다른 모니터로 넘어가면 안내 문구도 그 모니터로 옮김.</summary>
+        private void UpdateHintMonitor(Point clientPt)
+        {
+            var screenPt = new Point(clientPt.X + _virtual.X, clientPt.Y + _virtual.Y);
+            var monitor = Screen.FromPoint(screenPt).Bounds;
+            if (monitor == _hintMonitor) return;
+
+            if (!_hintMonitor.IsEmpty) Invalidate(HintArea(_hintMonitor));
+            _hintMonitor = monitor;
+            Invalidate(HintArea(monitor));
         }
 
         private void DrawLabel(Graphics g, string text, Point pos)
@@ -167,6 +198,7 @@ namespace ScrollCapture
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            UpdateHintMonitor(e.Location);
             if (_mouseDown)
             {
                 if (!_dragging &&
