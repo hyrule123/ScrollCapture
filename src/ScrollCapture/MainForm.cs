@@ -247,10 +247,11 @@ namespace ScrollCapture
                 Rectangle region;
                 var virtualBounds = SystemInformation.VirtualScreen;
                 using (var shot = ScreenCapture.Capture(virtualBounds))
-                using (var selector = new RegionSelectForm(shot, virtualBounds))
+                using (var selector = new RegionSelector(shot, virtualBounds))
                 {
-                    if (selector.ShowDialog() != DialogResult.OK) return;
-                    region = selector.SelectedRegion;
+                    var selected = await selector.SelectAsync();
+                    if (!selected.HasValue) return;
+                    region = selected.Value;
                 }
 
                 await Task.Delay(150); // 선택 오버레이가 사라질 때까지 대기
